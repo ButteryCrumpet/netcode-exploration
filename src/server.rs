@@ -1,4 +1,6 @@
 use std::io;
+use std::time;
+use std::thread;
 use std::iter;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -7,6 +9,7 @@ use tokio::prelude::*;
 use tokio::net::UdpSocket;
 
 use crate::connection::Connection;
+use crate::packet::Packet;
 
 pub struct Server {
     socket: UdpSocket,
@@ -51,7 +54,15 @@ impl Future for Server {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+
+        let addr = "127.0.0.1:12346".parse().unwrap();
+        if self.local_addr != addr {
+            let packet = Packet::new(0, 0, vec![]);
+            self.socket.poll_send_to(&packet.into_vec(), &addr).unwrap();
+        }
+
         loop {
+            thread::sleep(time::Duration::from_millis(100));
             let (data, addr) = match self.read() {
                 Ok(Async::Ready(t)) => t,
                 Ok(Async::NotReady) => return Ok(Async::NotReady),
@@ -64,16 +75,17 @@ impl Future for Server {
             let num_conns = self.connections.len();
             
             if self.connections.contains_key(&addr) {
-                println!("Sending {} to {} people", String::from_utf8_lossy(&data), num_conns);
-                
-                for (_, conn) in self.connections.iter() {
-                    //conn.send(&data, &mut self.socket).unwrap();
-                    conn.receive_packet(&data)
+
+                for (ad, conn) in self.connections.iter_mut() {
+                    conn.receive_packet(&data);
+                    conn.send(&data, &mut self.socket).unwrap();
                 }
 
             } else if num_conns < self.max_connections {
-                self.connections.insert(addr, Connection::new(self.local_addr, addr));
-                println!("Adding connection from address {} ({})", addr, num_conns);
+                let mut new_con = Connection::new(self.local_addr, addr);
+                println!("new connection");
+                new_con.send(&data, &mut self.socket).unwrap();
+                self.connections.insert(addr, new_con);
             }
         }
     }

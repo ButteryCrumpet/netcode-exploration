@@ -1,14 +1,15 @@
 
+#[derive(Debug, PartialEq)]
 pub struct Packet {
     pub sequence: u16,
     pub ack: u16,
-    pub ack_bits: [bool; 32]
+    pub acks: Vec<u16>
 }
 
 impl Packet {
 
-    pub fn new(sequence: u16, ack: u16, ack_bits: [bool; 32]) -> Self {
-        Packet { sequence, ack, ack_bits }
+    pub fn new(sequence: u16, ack: u16, acks: Vec<u16>) -> Self {
+        Packet { sequence, ack, acks }
     }
 
     pub fn from_vec(vec: &Vec<u8>) -> Result<Self, &str> {
@@ -19,58 +20,61 @@ impl Packet {
 
         let sequence = ((vec[0] as u16) << 8) | vec[1] as u16;
         let ack = ((vec[2] as u16) << 8) | vec[3] as u16;
+        
         let bits = ((vec[4] as u32) << 24)
             | ((vec[5] as u32) << 16)
             | ((vec[6] as u32) << 8)
             | vec[7] as u32;
 
-        let mut ack_bits: [bool; 32] = [false; 32];
-        for i in 0..31 {
-            ack_bits[0] = bit_at(bits, i);
+        let mut acks: Vec<u16> = Vec::new();
+        for i in 0..32 {
+            if bits & (1 << i) != 0 {
+                acks.push(ack - i as u16)
+            };
         }
 
-        Ok(Packet {
-            sequence,
-            ack,
-            ack_bits,
-        })
+        Ok(Packet { sequence, ack, acks })
     }
 
     pub fn into_vec(&self) -> Vec<u8> {
         let mut vec = Vec::new();
+
+        // Push sent sequence number
         vec.push((self.sequence >> 8) as u8);
         vec.push(self.sequence as u8);
+
+        // Push received sequence number
         vec.push((self.ack >> 8) as u8);
         vec.push((self.ack) as u8);
 
-        let acks = u32_to_u8_slice(bits_to_u32(self.ack_bits));
-        for i in 0..3 {
-            vec.push(acks[i]);
+        // Set bits for each sequence to ack
+        let mut ack_bits: u32 = 0;
+        for seq in self.acks.iter().take(32) {
+            ack_bits |= 1 << ((self.ack as u32) - (*seq as u32))
         }
+
+        // Push bitset
+        vec.push((ack_bits >> 24) as u8);
+        vec.push((ack_bits >> 16) as u8);
+        vec.push((ack_bits >> 8) as u8);
+        vec.push(ack_bits as u8);
 
         vec
     }
 }
 
-fn bit_at(bits: u32, n: u8) -> bool {
-    if n < 32 {
-        return bits & (1 << n) != 0
-    }
-    panic!("n must be smaller than 32")
-}
 
-fn bits_to_u32(bits: [bool; 32]) -> u32 {
-    let mut int: u32 = 0;
-    for i in 0..31 {
-        int |= 1 << bits[i] as u32;
-    }
-    int
-}
+#[cfg(test)]
+mod tests {
+    // Note this useful idiom: importing names from outer (for mod tests) scope.
+    use super::*;
 
-fn u32_to_u8_slice(int: u32) -> [u8;4] {
-    let n1 = (int >> 24) as u8;
-    let n2 = (int >> 16) as u8;
-    let n3 = (int >> 8) as u8;
-    let n4 = int as u8;
-    [n1, n2, n3, n4]
+    #[test]
+    fn test_serialize_deserialize() {
+        let packet = Packet::new(5, 7, vec![7,5,3,2,1]);
+        let vec =  packet.into_vec();
+        let new = Packet::from_vec(&vec).unwrap();
+        assert_eq!(packet, new);
+    }
+   
 }

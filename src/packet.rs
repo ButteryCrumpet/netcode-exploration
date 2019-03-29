@@ -20,7 +20,7 @@ impl Packet {
 
         let sequence = ((vec[0] as u16) << 8) | vec[1] as u16;
         let ack = ((vec[2] as u16) << 8) | vec[3] as u16;
-        
+
         let bits = ((vec[4] as u32) << 24)
             | ((vec[5] as u32) << 16)
             | ((vec[6] as u32) << 8)
@@ -29,7 +29,7 @@ impl Packet {
         let mut acks: Vec<u16> = Vec::new();
         for i in 0..32 {
             if bits & (1 << i) != 0 {
-                acks.push(ack - i as u16)
+                acks.push(ack.wrapping_sub(i))
             };
         }
 
@@ -49,8 +49,8 @@ impl Packet {
 
         // Set bits for each sequence to ack
         let mut ack_bits: u32 = 0;
-        for seq in self.acks.iter().take(32) {
-            ack_bits |= 1 << ((self.ack as u32) - (*seq as u32))
+        for seq in self.acks.iter() {
+            ack_bits |= 1 << self.get_bit_index(*seq);
         }
 
         // Push bitset
@@ -60,6 +60,14 @@ impl Packet {
         vec.push(ack_bits as u8);
 
         vec
+    }
+
+    fn get_bit_index(&self, seq: u16) -> u32 {
+        if seq > self.ack {
+            (self.ack + (std::u16::MAX - seq)) as u32
+        } else {
+            (self.ack - seq) as u32
+        }
     }
 }
 

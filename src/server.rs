@@ -1,12 +1,11 @@
 use std::io;
 use std::time;
-use std::thread;
 use std::iter;
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, UdpSocket};
+use std::thread;
 
 use tokio::prelude::*;
-use tokio::net::UdpSocket;
 
 use crate::connection::Connection;
 use crate::packet::Packet;
@@ -37,13 +36,9 @@ impl Server {
     }
 
     pub fn read(&mut self) -> Poll<(Vec<u8>, SocketAddr), io::Error> {
-        self.socket.poll_recv_from(&mut self.buffer)
+        self.socket.recv_from(&mut self.buffer)
             .map(|poll| {
-                let (amt, addr) = match poll {
-                    Async::Ready((amt, addr)) => (amt, addr),
-                    Async::NotReady => return Async::NotReady
-                };
-
+                let (amt, addr) = poll;
                 Async::Ready((self.buffer[..amt].to_vec(), addr))
             })
     }
@@ -57,15 +52,19 @@ impl Future for Server {
 
         let addr = "127.0.0.1:12346".parse().unwrap();
         if self.local_addr != addr {
-            let packet = Packet::new(0, 0, vec![]);
-            self.socket.poll_send_to(&packet.into_vec(), &addr).unwrap();
+            let mut new_con = Connection::new(self.local_addr, addr);
+            new_con.send(&self.buffer, &mut self.socket).unwrap();
+            self.connections.insert(addr, new_con);
         }
 
+        let start = time::Instant::now();
+
         loop {
-            thread::sleep(time::Duration::from_millis(100));
-            let (data, addr) = match self.read() {
-                Ok(Async::Ready(t)) => t,
-                Ok(Async::NotReady) => return Ok(Async::NotReady),
+            
+            thread::sleep(time::Duration::from_millis(33));
+
+            let (amt, addr) = match self.socket.recv_from(&mut self.buffer) {
+                Ok(t) => t,
                 Err(e) =>  {
                     println!("Ahh shit.. {}", e);
                     return Ok(Async::NotReady)
@@ -77,15 +76,20 @@ impl Future for Server {
             if self.connections.contains_key(&addr) {
 
                 for (ad, conn) in self.connections.iter_mut() {
-                    conn.receive_packet(&data);
+                    let data = conn.receive_packet(&self.buffer);
                     conn.send(&data, &mut self.socket).unwrap();
                 }
 
             } else if num_conns < self.max_connections {
                 let mut new_con = Connection::new(self.local_addr, addr);
                 println!("new connection");
-                new_con.send(&data, &mut self.socket).unwrap();
+                new_con.send(&self.buffer, &mut self.socket).unwrap();
                 self.connections.insert(addr, new_con);
+            }
+
+            if time::Instant::now() - start > time::Duration::from_secs(20) {
+                println!("{} done", self.local_addr);
+                return Ok(Async::Ready(()));
             }
         }
     }

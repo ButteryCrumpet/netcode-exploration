@@ -83,7 +83,7 @@ impl Connection {
         }
 
         let packet = Packet::new(self.sequence, self.last_received_sequence, acks);
-        let send = socket.send_to(&packet.into_vec(), &self.remote_addr);
+        let send = socket.send_to(&packet.into_slice(), &self.remote_addr);
 
         self.sequence = self.sequence.wrapping_add(1);
         self.sent_packets = self.sent_packets.wrapping_add(1);
@@ -92,10 +92,10 @@ impl Connection {
         send
     }
 
-    pub fn receive_packet(&mut self, vec: &Vec<u8>) -> Vec<u8> {
+    pub fn receive_packet(&mut self, data: &[u8]) -> Vec<u8> {
         use PacketState::{Acked, UnAcked};
 
-        let packet = Packet::from_vec(vec).unwrap();
+        let packet = Packet::from_slice(data).unwrap();
         self.recv_packets = self.recv_packets.wrapping_add(1);
 
         // Update last received packet sequence number if it is within

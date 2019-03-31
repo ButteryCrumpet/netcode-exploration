@@ -50,19 +50,8 @@ impl Future for Server {
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
 
-        let addr = "127.0.0.1:12346".parse().unwrap();
-        if self.local_addr != addr {
-            let mut new_con = Connection::new(self.local_addr, addr);
-            new_con.send(&self.buffer, &mut self.socket).unwrap();
-            self.connections.insert(addr, new_con);
-        }
-
-        let start = time::Instant::now();
-
         loop {
             
-            thread::sleep(time::Duration::from_millis(33));
-
             let (amt, addr) = match self.socket.recv_from(&mut self.buffer) {
                 Ok(t) => t,
                 Err(e) =>  {
@@ -82,14 +71,9 @@ impl Future for Server {
 
             } else if num_conns < self.max_connections {
                 let mut new_con = Connection::new(self.local_addr, addr);
-                println!("new connection");
+                println!("New connection from {}", addr);
                 new_con.send(&self.buffer, &mut self.socket).unwrap();
                 self.connections.insert(addr, new_con);
-            }
-
-            if time::Instant::now() - start > time::Duration::from_secs(20) {
-                println!("{} done", self.local_addr);
-                return Ok(Async::Ready(()));
             }
         }
     }

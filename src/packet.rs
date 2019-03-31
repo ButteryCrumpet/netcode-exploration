@@ -12,19 +12,19 @@ impl Packet {
         Packet { sequence, ack, acks }
     }
 
-    pub fn from_vec(vec: &Vec<u8>) -> Result<Self, &str> {
+    pub fn from_slice(slice: &[u8]) -> Result<Self, &str> {
 
-        if vec.len() < 8 {
-            return Err("vec is too short noob")
+        if slice.len() < 8 {
+            return Err("slice is too short noob")
         }
 
-        let sequence = ((vec[0] as u16) << 8) | vec[1] as u16;
-        let ack = ((vec[2] as u16) << 8) | vec[3] as u16;
+        let sequence = ((slice[0] as u16) << 8) | slice[1] as u16;
+        let ack = ((slice[2] as u16) << 8) | slice[3] as u16;
 
-        let bits = ((vec[4] as u32) << 24)
-            | ((vec[5] as u32) << 16)
-            | ((vec[6] as u32) << 8)
-            | vec[7] as u32;
+        let bits = ((slice[4] as u32) << 24)
+            | ((slice[5] as u32) << 16)
+            | ((slice[6] as u32) << 8)
+            | slice[7] as u32;
 
         let mut acks: Vec<u16> = Vec::new();
         for i in 0..32 {
@@ -36,7 +36,7 @@ impl Packet {
         Ok(Packet { sequence, ack, acks })
     }
 
-    pub fn into_vec(&self) -> Vec<u8> {
+    pub fn into_slice(&self) -> Vec<u8> {
         let mut vec = Vec::new();
 
         // Push sent sequence number
@@ -80,8 +80,8 @@ mod tests {
     #[test]
     fn test_serialize_deserialize() {
         let packet = Packet::new(5, 7, vec![7,5,3,2,1]);
-        let vec =  packet.into_vec();
-        let new = Packet::from_vec(&vec).unwrap();
+        let vec =  packet.into_slice();
+        let new = Packet::from_slice(&vec).unwrap();
         assert_eq!(packet, new);
     }
    

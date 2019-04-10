@@ -1,7 +1,7 @@
-use std::io;
-use std::time::{Instant, Duration};
 use std::net::{SocketAddr, UdpSocket};
+use std::time::{Duration, Instant};
 
+use crate::message::Message;
 use crate::packet::Packet;
 
 const BUFFER_SIZE: usize = 128;
@@ -15,9 +15,8 @@ struct PacketData {
 #[derive(Copy, Clone, Debug)]
 enum PacketState {
     Acked(PacketData),
-    UnAcked(PacketData)
+    UnAcked(PacketData),
 }
-
 
 pub struct Connection {
     local_addr: SocketAddr,
@@ -32,11 +31,10 @@ pub struct Connection {
     acked_packets: u32,
     lost_packets: u32,
     sent_packets: u32,
-    rtt: f32
+    rtt: f32,
 }
 
 impl Connection {
-    
     pub fn new(local_addr: SocketAddr, remote_addr: SocketAddr) -> Connection {
         Connection {
             local_addr,
@@ -55,23 +53,19 @@ impl Connection {
         }
     }
 
-    pub fn send(&mut self, _data: &[u8], socket: &mut UdpSocket) -> Result<usize, std::io::Error> {
+    pub fn send(&mut self, data: &[u8], socket: &mut UdpSocket) -> Result<usize, std::io::Error> {
         use PacketState::UnAcked;
 
         // Set sent packer buffer to ack them when needed
         let index = self.sequence as usize % BUFFER_SIZE;
-        self.sent_ack_buffer[index] = Some(
-            UnAcked(PacketData {
-                seq: self.sequence,
-                sent_time: Instant::now()
-            })
-        );
-        
-        // Get last 32 received packets and add them to acks
-        // if they exist
+        self.sent_ack_buffer[index] = Some(UnAcked(PacketData {
+            seq: self.sequence,
+            sent_time: Instant::now(),
+        }));
+
+        // Get last 32 received packets and add them to acks if they exist
         let mut acks: Vec<u16> = Vec::with_capacity(32);
         for i in 0..32 {
-
             let seq = self.last_received_sequence.wrapping_sub(i);
             let index = seq as usize % BUFFER_SIZE;
 
@@ -82,8 +76,13 @@ impl Connection {
             }
         }
 
-        let packet = Packet::new(self.sequence, self.last_received_sequence, acks);
-        let send = socket.send_to(&packet.into_slice(), &self.remote_addr);
+        let packet = Packet::new(
+            self.sequence,
+            self.last_received_sequence,
+            acks,
+            data.to_vec(),
+        );
+        let send = socket.send_to(&packet.into_vec(), &self.remote_addr);
 
         self.sequence = self.sequence.wrapping_add(1);
         self.sent_packets = self.sent_packets.wrapping_add(1);
@@ -115,11 +114,10 @@ impl Connection {
         for seq in packet.acks.iter() {
             let sn = *seq as usize;
             let index = sn % BUFFER_SIZE;
-            
+
             // If we we have sent a packet and it is current unacked
             // we need to set it to acked.
             if let Some(UnAcked(pdata)) = self.sent_ack_buffer[index] {
-                
                 // If the sequence number isn't the same as inside
                 // the unacked buffer we must have lost that packet
                 if pdata.seq != sn as u16 {
@@ -133,24 +131,23 @@ impl Connection {
             };
         }
 
-        Vec::new()
+        packet.data
     }
 }
 
 impl Drop for Connection {
     fn drop(&mut self) {
         println!(
-            "sent {}\nrecv {}\nacked {}\nlost {}\nrecent_recv {}\nrtt {}ms\n", 
+            "sent {}\nrecv {}\nacked {}\nlost {}\nrecent_recv {}\nrtt {}ms\n",
             self.sent_packets,
             self.recv_packets,
-            self.acked_packets, 
-            self.lost_packets, 
+            self.acked_packets,
+            self.lost_packets,
             self.last_received_sequence,
             self.rtt
         );
     }
 }
-
 
 // Static Helpers
 
@@ -163,6 +160,6 @@ fn is_recent(new: u16, old: u16) -> bool {
 }
 
 fn smoothed_average(curr: f32, b: Duration) -> f32 {
-    let av = (b.as_secs() as f32) * 1000.0 + (b.subsec_nanos() / 1000000) as f32;
+    let av = (b.as_secs() as f32) * 1000.0 + b.subsec_millis() as f32;
     (curr - (curr - av) * 0.1).max(0.0)
 }

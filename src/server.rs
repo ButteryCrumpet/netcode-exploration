@@ -1,26 +1,27 @@
-use std::io;
-use std::time;
-use std::iter;
+use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
+use std::io;
+use std::iter;
 use std::net::{SocketAddr, UdpSocket};
-use std::thread;
 
 use tokio::prelude::*;
 
 use crate::connection::Connection;
-use crate::packet::Packet;
 
 pub struct Server {
     socket: UdpSocket,
     buffer: Vec<u8>,
     connections: HashMap<SocketAddr, Connection>,
     local_addr: SocketAddr,
-    max_connections: usize
+    max_connections: usize,
 }
 
 impl Server {
-
-    pub fn new(addr: SocketAddr, max_packet_size: usize, max_connections: usize) -> Result<Self, io::Error> {
+    pub fn new(
+        addr: SocketAddr,
+        max_packet_size: usize,
+        max_connections: usize,
+    ) -> Result<Self, io::Error> {
         let socket = UdpSocket::bind(&addr)?;
         let buffer: Vec<u8> = iter::repeat(0).take(max_packet_size).collect();
         let connections = HashMap::new();
@@ -31,16 +32,15 @@ impl Server {
             buffer,
             connections,
             local_addr,
-            max_connections
+            max_connections,
         })
     }
 
     pub fn read(&mut self) -> Poll<(Vec<u8>, SocketAddr), io::Error> {
-        self.socket.recv_from(&mut self.buffer)
-            .map(|poll| {
-                let (amt, addr) = poll;
-                Async::Ready((self.buffer[..amt].to_vec(), addr))
-            })
+        self.socket.recv_from(&mut self.buffer).map(|poll| {
+            let (amt, addr) = poll;
+            Async::Ready((self.buffer[..amt].to_vec(), addr))
+        })
     }
 }
 
@@ -49,33 +49,31 @@ impl Future for Server {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-
         loop {
-            
             let (amt, addr) = match self.socket.recv_from(&mut self.buffer) {
                 Ok(t) => t,
-                Err(e) =>  {
+                Err(e) => {
                     println!("Ahh shit.. {}", e);
-                    return Ok(Async::NotReady)
-                },
+                    return Ok(Async::NotReady);
+                }
             };
 
-            let num_conns = self.connections.len();
-            
-            if self.connections.contains_key(&addr) {
-
-                for (ad, conn) in self.connections.iter_mut() {
-                    let data = conn.receive_packet(&self.buffer);
-                    conn.send(&data, &mut self.socket).unwrap();
+            match self.connections.entry(addr) {
+                Occupied(_) => {
+                    for (_addr, conn) in self.connections.iter_mut() {
+                        let data = conn.receive_packet(&self.buffer[..amt]);
+                        conn.send(&data, &mut self.socket).unwrap();
+                    }
                 }
-
-            } else if num_conns < self.max_connections {
-                let mut new_con = Connection::new(self.local_addr, addr);
-                println!("New connection from {}", addr);
-                new_con.send(&self.buffer, &mut self.socket).unwrap();
-                self.connections.insert(addr, new_con);
-            }
+                Vacant(_) => {
+                    if self.connections.len() < self.max_connections {
+                        let mut new_con = Connection::new(self.local_addr, addr);
+                        println!("New connection from {}", addr);
+                        new_con.send(&self.buffer, &mut self.socket).unwrap();
+                        self.connections.insert(addr, new_con);
+                    }
+                }
+            };
         }
     }
-       
 }

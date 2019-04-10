@@ -1,21 +1,31 @@
+use crate::message::Message;
 
 #[derive(Debug, PartialEq)]
 pub struct Packet {
     pub sequence: u16,
     pub ack: u16,
-    pub acks: Vec<u16>
+    pub acks: Vec<u16>,
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug)]
+pub enum ParseError {
+    SliceTooShort,
 }
 
 impl Packet {
-
-    pub fn new(sequence: u16, ack: u16, acks: Vec<u16>) -> Self {
-        Packet { sequence, ack, acks }
+    pub fn new(sequence: u16, ack: u16, acks: Vec<u16>, data: Vec<u8>) -> Self {
+        Packet {
+            sequence,
+            ack,
+            acks,
+            data,
+        }
     }
 
-    pub fn from_slice(slice: &[u8]) -> Result<Self, &str> {
-
+    pub fn from_slice(slice: &[u8]) -> Result<Self, ParseError> {
         if slice.len() < 8 {
-            return Err("slice is too short noob")
+            return Err(ParseError::SliceTooShort);
         }
 
         let sequence = ((slice[0] as u16) << 8) | slice[1] as u16;
@@ -33,10 +43,17 @@ impl Packet {
             };
         }
 
-        Ok(Packet { sequence, ack, acks })
-    }
+        let data = slice[8..].to_vec();
 
-    pub fn into_slice(&self) -> Vec<u8> {
+        Ok(Packet {
+            sequence,
+            ack,
+            acks,
+            data,
+        })
+    }
+    // to_vec?
+    pub fn into_vec(mut self) -> Vec<u8> {
         let mut vec = Vec::new();
 
         // Push sent sequence number
@@ -59,6 +76,8 @@ impl Packet {
         vec.push((ack_bits >> 8) as u8);
         vec.push(ack_bits as u8);
 
+        vec.append(&mut self.data);
+
         vec
     }
 
@@ -71,18 +90,16 @@ impl Packet {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-    // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
 
     #[test]
     fn test_serialize_deserialize() {
-        let packet = Packet::new(5, 7, vec![7,5,3,2,1]);
-        let vec =  packet.into_slice();
+        let packet = Packet::new(5, 7, vec![7, 5, 3, 2, 1], vec![]);
+        let vec = packet.into_vec();
         let new = Packet::from_slice(&vec).unwrap();
-        assert_eq!(packet, new);
+        assert_eq!(Packet::new(5, 7, vec![7, 5, 3, 2, 1], vec![]), new);
     }
-   
+
 }

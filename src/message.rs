@@ -3,7 +3,7 @@
 // if recent ack > prev_recent ack, pop acked messages
 // hand over next to send
 // recv_messages(data) - sort out ordering, prep for recv next on order
-// recv_next() -> Vec<MessageData(Vec<u8>)>
+// recv_next(sequence) -> Vec<MessageData(Vec<u8>)>
 
 pub struct Message {
     id: u16,

@@ -3,7 +3,7 @@ use std::time;
 
 mod client;
 mod connection;
-mod message;
+mod message_queue;
 mod packet;
 mod server;
 

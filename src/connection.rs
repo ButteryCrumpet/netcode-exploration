@@ -1,7 +1,7 @@
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
-use crate::message::Message;
+use crate::message_queue::MessageQueue;
 use crate::packet::Packet;
 
 const BUFFER_SIZE: usize = 128;

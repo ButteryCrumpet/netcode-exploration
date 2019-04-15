@@ -1,10 +1,10 @@
 use std::cmp;
-use std::collections::{BinaryHeap, VecDeque};
+use std::collections::{BinaryHeap, HashMap};
 
 const MESSAGE_HEADER_LENGTH: usize = 4;
 const BUFFER_SIZE: usize = 256;
 
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Clone)]
 struct Message {
     id: u16,
     size: u16,
@@ -25,8 +25,10 @@ impl PartialOrd for Message {
 
 pub struct MessageQueue {
     sequence_local: u16,
+    recent_acked: u16,
     sequence_remote: u16,
-    send_queue: VecDeque<Message>,
+    awaiting_ack: HashMap<u16, Vec<u16>>,
+    send_queue: Vec<Option<Message>>,
     recv_queue: BinaryHeap<Message>,
     recv: Vec<Vec<u8>>,
 }
@@ -35,33 +37,70 @@ impl MessageQueue {
     pub fn new() -> Self {
         MessageQueue {
             sequence_local: 0,
+            recent_acked: 0,
             sequence_remote: 0,
-            send_queue: VecDeque::new(),
+            awaiting_ack: HashMap::new(),
+            send_queue: vec![None; BUFFER_SIZE],
             recv_queue: BinaryHeap::new(),
             recv: Vec::new(),
         }
     }
 
+    // Sending -- Queue message -> get to send -> acknowledge pack id when acked
     pub fn queue_message(&mut self, message: Vec<u8>) {
         let new_message = Message {
             id: self.sequence_local,
             size: message.len() as u16,
             data: message,
         };
+        self.send_queue[self.sequence_local as usize % BUFFER_SIZE] = Some(new_message);
+        self.sequence_local = self.sequence_local.wrapping_add(1);
     }
 
-    pub fn recv_next(&mut self) -> Option<Vec<Vec<u8>>> {
-        if self.recv.len() < 1 {
-            return None;
+    pub fn send_next(&mut self, sequence: u16, amt: u16) -> Vec<u8> {
+        let mut data = Vec::new();
+        let mut ack_ids = Vec::new();
+        let mut written = 0;
+        let start = self.recent_acked as usize;
+        let end = self.sequence_local as usize;
+
+        for index in start..end {
+            let normlz = index % BUFFER_SIZE;
+            if let Some(message) = &mut self.send_queue[normlz] {
+                written += message.size;
+                if written < amt {
+                    data.append(&mut message_into_vec(&message));
+                    ack_ids.push(message.id);
+                }
+            }
         }
-        let next = Some(self.recv);
-        self.recv = Vec::new();
-        next
+        self.awaiting_ack.insert(sequence, ack_ids);
+        data
     }
 
+    pub fn acknowledge(&mut self, pid: u16) {
+        if let Some(ids) = self.awaiting_ack.get(&pid) {
+            for id in ids.iter() {
+                let index = *id as usize % BUFFER_SIZE;
+                self.send_queue[index] = None;
+                if self.recent_acked < *id {
+                    self.recent_acked = *id;
+                }
+            }
+            self.awaiting_ack.remove(&pid);
+        }
+    }
+
+    // Receiving -- receive message internally -> recv all queued messages
+    pub fn recv_next_all(&mut self) -> Vec<Vec<u8>> {
+        let mut r = Vec::new();
+        r.append(&mut self.recv);
+        r
+    }
+
+    // Should return Result<usize, ParseErr> where usize is no. message so or something
     pub fn recv_messages(&mut self, slice: &[u8]) {
         let len = slice.len();
-
         let mut index = 0;
         while index < len && len - index >= MESSAGE_HEADER_LENGTH {
             // extract headers
@@ -92,8 +131,22 @@ impl MessageQueue {
                 let msg = self.recv_queue.pop().unwrap();
                 self.recv.push(msg.data);
 
-                self.sequence_remote.wrapping_add(1);
+                self.sequence_remote = self.sequence_remote.wrapping_add(1);
             }
         }
     }
+}
+
+fn message_into_vec(message: &Message) -> Vec<u8> {
+    let mut vec = Vec::new();
+
+    vec.push((message.id >> 8) as u8);
+    vec.push(message.id as u8);
+
+    vec.push((message.size >> 8) as u8);
+    vec.push(message.size as u8);
+
+    vec.append(&mut message.data.clone());
+
+    vec
 }

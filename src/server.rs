@@ -61,15 +61,22 @@ impl Future for Server {
             match self.connections.entry(addr) {
                 Occupied(_) => {
                     for (_addr, conn) in self.connections.iter_mut() {
-                        let data = conn.receive_packet(&self.buffer[..amt]);
-                        conn.send(&data, &mut self.socket).unwrap();
+                        conn.receive_packet(&self.buffer[..amt]);
+                        let data = conn.recv_messages();
+                        //print!("\r");
+                        for msg in data.into_iter() {
+                            //print!("{}, ", std::str::from_utf8(&msg).unwrap());
+                            conn.queue_message(msg);
+                        }
+                        conn.send(&mut self.socket).unwrap();
                     }
                 }
                 Vacant(_) => {
                     if self.connections.len() < self.max_connections {
                         let mut new_con = Connection::new(self.local_addr, addr);
                         println!("New connection from {}", addr);
-                        new_con.send(&self.buffer, &mut self.socket).unwrap();
+                        new_con.queue_message(self.buffer.clone());
+                        new_con.send(&mut self.socket).unwrap();
                         self.connections.insert(addr, new_con);
                     }
                 }

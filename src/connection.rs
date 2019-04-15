@@ -27,6 +27,7 @@ pub struct Connection {
     last_received_sequence: u16,
     recv_ack_buffer: [Option<u16>; BUFFER_SIZE],
     sent_ack_buffer: [Option<PacketState>; BUFFER_SIZE],
+    message_queue: MessageQueue,
     recv_packets: u32,
     acked_packets: u32,
     lost_packets: u32,
@@ -45,6 +46,7 @@ impl Connection {
             last_received_sequence: 0,
             recv_ack_buffer: [None; BUFFER_SIZE],
             sent_ack_buffer: [None; BUFFER_SIZE],
+            message_queue: MessageQueue::new(),
             recv_packets: 0,
             acked_packets: 0,
             lost_packets: 0,
@@ -53,7 +55,11 @@ impl Connection {
         }
     }
 
-    pub fn send(&mut self, data: &[u8], socket: &mut UdpSocket) -> Result<usize, std::io::Error> {
+    pub fn queue_message(&mut self, message: Vec<u8>) {
+        self.message_queue.queue_message(message);
+    }
+
+    pub fn send(&mut self, socket: &mut UdpSocket) -> Result<usize, std::io::Error> {
         use PacketState::UnAcked;
 
         // Set sent packer buffer to ack them when needed
@@ -75,13 +81,10 @@ impl Connection {
                 }
             }
         }
+        println!("sending acks {:?}", acks);
+        let data = self.message_queue.send_next(self.sequence, 1200);
 
-        let packet = Packet::new(
-            self.sequence,
-            self.last_received_sequence,
-            acks,
-            data.to_vec(),
-        );
+        let packet = Packet::new(self.sequence, self.last_received_sequence, acks, data);
         let send = socket.send_to(&packet.into_vec(), &self.remote_addr);
 
         self.sequence = self.sequence.wrapping_add(1);
@@ -91,12 +94,12 @@ impl Connection {
         send
     }
 
-    pub fn receive_packet(&mut self, data: &[u8]) -> Vec<u8> {
+    pub fn receive_packet(&mut self, data: &[u8]) {
         use PacketState::{Acked, UnAcked};
 
         let packet = Packet::from_slice(data).unwrap();
         self.recv_packets = self.recv_packets.wrapping_add(1);
-
+        println!("recv {}", packet.sequence);
         // Update last received packet sequence number if it is within
         // window of half u16::MAX
         if is_recent(packet.sequence, self.last_received_sequence) {
@@ -109,6 +112,9 @@ impl Connection {
         // Buffer sequence number for sending back acks
         let index = packet.sequence as usize % BUFFER_SIZE;
         self.recv_ack_buffer[index] = Some(packet.sequence);
+
+        // Receive messages into message queue
+        self.message_queue.recv_messages(&packet.data);
 
         // Confirm received acks
         for seq in packet.acks.iter() {
@@ -127,11 +133,16 @@ impl Connection {
                 self.sent_ack_buffer[index] = Some(Acked(pdata));
                 self.acked_packets = self.acked_packets.wrapping_add(1);
 
+                // Ack the message queue
+                self.message_queue.acknowledge(packet.sequence);
+
                 self.rtt = smoothed_average(self.rtt, self.last_received_at - pdata.sent_time);
             };
         }
+    }
 
-        packet.data
+    pub fn recv_messages(&mut self) -> Vec<Vec<u8>> {
+        self.message_queue.recv_next_all()
     }
 }
 

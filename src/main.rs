@@ -21,25 +21,27 @@ fn main() {
     let j2 = thread::spawn(move || {
         let mut client = Client::new(client_addr);
         client.connect(server_addr);
-
-        client.send(b"hi").unwrap();
+        client.queue_message(b"connect".to_vec());
+        client.send_next().unwrap();
         let start = time::Instant::now();
         let mut last_sent = time::Instant::now();
         let mut count: u128 = 0;
         loop {
             let ltime = time::Instant::now();
-
-            if let Ok(data) = client.recv() {
-                print!("\r{}", std::str::from_utf8(&data).unwrap());
+            client.recv();
+            if let Some(data) = client.recv_messages() {
+                print!("\r");
+                for msg in data.iter() {
+                    print!("{}, ", std::str::from_utf8(&msg).unwrap());
+                }
             }
 
-            if ltime - last_sent > time::Duration::from_millis(33) {
-                client.queue_message(Vec::from(format!("This is message: {}", count)));
+            if ltime - last_sent > time::Duration::from_millis(1000) {
+                client.queue_message(Vec::from(format!("{}", count)));
                 count += 1;
                 last_sent = ltime;
+                if let Ok(_amt) = client.send_next() {}
             }
-
-            if let Ok(Some(_amt)) = client.send_next() {}
 
             if time::Instant::now() - start > time::Duration::from_secs(20) {
                 break;

@@ -30,38 +30,42 @@ impl Client {
     pub fn connect(&mut self, remote: SocketAddr) -> bool {
         self.remote_addr = Some(remote);
         self.connection = Some(Connection::new(self.local_addr, self.remote_addr.unwrap()));
+        while let Some(message) = self.message_queue.pop_front() {
+            if let Some(conn) = &mut self.connection {
+                conn.queue_message(message);
+            }
+        }
         true
     }
 
-    pub fn send(&mut self, data: &[u8]) -> Result<usize, std::io::Error> {
-        match &mut self.connection {
-            Some(conn) => conn.send(data, &mut self.socket),
-            None => panic!("connect first"),
+    pub fn send_next(&mut self) -> Result<usize, std::io::Error> {
+        if let Some(conn) = &mut self.connection {
+            return conn.send(&mut self.socket);
         }
+        panic!("connect first");
     }
 
-    pub fn send_next(&mut self) -> Result<Option<usize>, std::io::Error> {
-        if let Some(data) = self.message_queue.pop_front() {
-            return match self.send(&data) {
-                Ok(u) => Ok(Some(u)),
-                Err(e) => Err(e),
-            };
-        }
-        Ok(None)
-    }
-
-    pub fn recv(&mut self) -> Result<Vec<u8>, io::Error> {
+    pub fn recv(&mut self) -> Result<usize, io::Error> {
         let amt = self.socket.recv(&mut self.buffer)?;
         let data = self.buffer[..amt].to_vec();
-        let recv = match &mut self.connection {
+        match &mut self.connection {
             Some(conn) => conn.receive_packet(&data),
             None => panic!("connect first"),
         };
-
-        Ok(recv)
+        Ok(amt)
     }
 
     pub fn queue_message(&mut self, message: Vec<u8>) {
-        self.message_queue.push_back(message);
+        match &mut self.connection {
+            Some(conn) => conn.queue_message(message),
+            None => self.message_queue.push_back(message),
+        }
+    }
+
+    pub fn recv_messages(&mut self) -> Option<Vec<Vec<u8>>> {
+        if let Some(conn) = &mut self.connection {
+            return Some(conn.recv_messages());
+        }
+        None
     }
 }

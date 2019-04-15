@@ -1,5 +1,3 @@
-use crate::message::Message;
-
 #[derive(Debug, PartialEq)]
 pub struct Packet {
     pub sequence: u16,

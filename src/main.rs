@@ -15,7 +15,8 @@ fn main() {
     let server_addr = "127.0.0.1:12346".parse().unwrap();
 
     let j1 = thread::spawn(move || {
-        tokio::run(Server::new(server_addr, 1504, 1).expect("bind fail"));
+        let mut server = Server::new(server_addr, 1504, 1).expect("bind fail");
+        server.run();
     });
 
     let j2 = thread::spawn(move || {
@@ -30,13 +31,12 @@ fn main() {
             let ltime = time::Instant::now();
             client.recv();
             if let Some(data) = client.recv_messages() {
-                print!("\r");
                 for msg in data.iter() {
-                    print!("{}, ", std::str::from_utf8(&msg).unwrap());
+                    //println!("{}", std::str::from_utf8(&msg).unwrap());
                 }
             }
 
-            if ltime - last_sent > time::Duration::from_millis(1000) {
+            if ltime - last_sent > time::Duration::from_millis(500) {
                 client.queue_message(Vec::from(format!("{}", count)));
                 count += 1;
                 last_sent = ltime;

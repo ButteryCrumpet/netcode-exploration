@@ -81,10 +81,10 @@ impl Connection {
                 }
             }
         }
-        println!("sending acks {:?}", acks);
-        let data = self.message_queue.send_next(self.sequence, 1200);
 
+        let data = self.message_queue.send_next(self.sequence, 1200);
         let packet = Packet::new(self.sequence, self.last_received_sequence, acks, data);
+
         let send = socket.send_to(&packet.into_vec(), &self.remote_addr);
 
         self.sequence = self.sequence.wrapping_add(1);
@@ -99,7 +99,7 @@ impl Connection {
 
         let packet = Packet::from_slice(data).unwrap();
         self.recv_packets = self.recv_packets.wrapping_add(1);
-        println!("recv {}", packet.sequence);
+
         // Update last received packet sequence number if it is within
         // window of half u16::MAX
         if is_recent(packet.sequence, self.last_received_sequence) {
@@ -134,7 +134,7 @@ impl Connection {
                 self.acked_packets = self.acked_packets.wrapping_add(1);
 
                 // Ack the message queue
-                self.message_queue.acknowledge(packet.sequence);
+                self.message_queue.acknowledge(pdata.seq);
 
                 self.rtt = smoothed_average(self.rtt, self.last_received_at - pdata.sent_time);
             };

@@ -63,7 +63,7 @@ impl MessageQueue {
         let mut written = 0;
         let start = self.recent_acked as usize;
         let end = self.sequence_local as usize;
-
+        //println!("{}/{} - {}", start, end, self.send_queue.len());
         for index in start..end {
             let normlz = index % BUFFER_SIZE;
             if let Some(message) = &mut self.send_queue[normlz] {

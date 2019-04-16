@@ -1,10 +1,9 @@
+use rand::prelude::*;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
 use std::io;
 use std::iter;
 use std::net::{SocketAddr, UdpSocket};
-
-use tokio::prelude::*;
 
 use crate::connection::Connection;
 
@@ -36,27 +35,17 @@ impl Server {
         })
     }
 
-    pub fn read(&mut self) -> Poll<(Vec<u8>, SocketAddr), io::Error> {
-        self.socket.recv_from(&mut self.buffer).map(|poll| {
-            let (amt, addr) = poll;
-            Async::Ready((self.buffer[..amt].to_vec(), addr))
-        })
-    }
-}
-
-impl Future for Server {
-    type Item = ();
-    type Error = ();
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    pub fn run(&mut self) {
+        let mut rng = thread_rng();
         loop {
             let (amt, addr) = match self.socket.recv_from(&mut self.buffer) {
                 Ok(t) => t,
-                Err(e) => {
-                    println!("Ahh shit.. {}", e);
-                    return Ok(Async::NotReady);
-                }
+                Err(e) => panic!("Ahh shit.. {}", e),
             };
+            let drop: f32 = rng.gen();
+            if drop < 0.1 {
+                continue;
+            }
 
             match self.connections.entry(addr) {
                 Occupied(_) => {
@@ -75,7 +64,13 @@ impl Future for Server {
                     if self.connections.len() < self.max_connections {
                         let mut new_con = Connection::new(self.local_addr, addr);
                         println!("New connection from {}", addr);
-                        new_con.queue_message(self.buffer.clone());
+                        new_con.receive_packet(&self.buffer[..amt]);
+                        let data = new_con.recv_messages();
+                        //print!("\r");
+                        for msg in data.into_iter() {
+                            //print!("{}, ", std::str::from_utf8(&msg).unwrap());
+                        }
+                        new_con.queue_message(b"accepted\n".to_vec());
                         new_con.send(&mut self.socket).unwrap();
                         self.connections.insert(addr, new_con);
                     }

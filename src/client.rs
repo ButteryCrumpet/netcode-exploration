@@ -1,6 +1,8 @@
 use std::collections::VecDeque;
 use std::io;
 use std::net::{SocketAddr, UdpSocket};
+use std::sync::mpsc::TryRecvError;
+use std::thread;
 
 use crate::connection::Connection;
 
@@ -27,15 +29,14 @@ impl Client {
         }
     }
 
-    pub fn connect(&mut self, remote: SocketAddr) -> bool {
+    pub fn connect(&mut self, remote: SocketAddr) -> io::Result<()> {
         self.remote_addr = Some(remote);
-        self.connection = Some(Connection::new(self.local_addr, self.remote_addr.unwrap()));
+        let mut new_conn = Connection::new(self.local_addr, self.remote_addr.unwrap());
         while let Some(message) = self.message_queue.pop_front() {
-            if let Some(conn) = &mut self.connection {
-                conn.queue_message(message);
-            }
+            new_conn.queue_message(&message);
         }
-        true
+        self.connection = Some(new_conn);
+        Ok(())
     }
 
     pub fn send_next(&mut self) -> Result<usize, std::io::Error> {
@@ -45,19 +46,25 @@ impl Client {
         panic!("connect first");
     }
 
-    pub fn recv(&mut self) -> Result<usize, io::Error> {
-        let amt = self.socket.recv(&mut self.buffer)?;
-        let data = self.buffer[..amt].to_vec();
-        match &mut self.connection {
-            Some(conn) => conn.receive_packet(&data),
-            None => panic!("connect first"),
-        };
-        Ok(amt)
+    pub fn recv(&mut self) -> Result<usize, TryRecvError> {
+        if let Ok((amt, addr)) = self.socket.recv_from(&mut self.buffer) {
+            if addr != self.remote_addr.unwrap() {
+                return Ok(0);
+            }
+            let data = self.buffer[..amt].to_vec();
+            match &mut self.connection {
+                Some(conn) => conn.receive_packet(&data),
+                None => panic!("connect first"),
+            };
+            Ok(amt)
+        } else {
+            Err(TryRecvError::Empty)
+        }
     }
 
     pub fn queue_message(&mut self, message: Vec<u8>) {
         match &mut self.connection {
-            Some(conn) => conn.queue_message(message),
+            Some(conn) => conn.queue_message(&message),
             None => self.message_queue.push_back(message),
         }
     }

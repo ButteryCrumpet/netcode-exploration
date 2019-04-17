@@ -1,5 +1,6 @@
 use std::cmp;
 use std::collections::{BinaryHeap, HashMap};
+use std::time::{Duration, Instant};
 
 const MESSAGE_HEADER_LENGTH: usize = 4;
 const BUFFER_SIZE: usize = 256;
@@ -33,6 +34,8 @@ pub struct MessageQueue {
     recv: Vec<Vec<u8>>,
 }
 
+// message rtt
+// adjust message sent based on rtt
 impl MessageQueue {
     pub fn new() -> Self {
         MessageQueue {
@@ -47,11 +50,11 @@ impl MessageQueue {
     }
 
     // Sending -- Queue message -> get to send -> acknowledge pack id when acked
-    pub fn queue_message(&mut self, message: Vec<u8>) {
+    pub fn queue_message(&mut self, message: &[u8]) {
         let new_message = Message {
             id: self.sequence_local,
             size: message.len() as u16,
-            data: message,
+            data: message.to_vec(),
         };
         self.send_queue[self.sequence_local as usize % BUFFER_SIZE] = Some(new_message);
         self.sequence_local = self.sequence_local.wrapping_add(1);
@@ -63,7 +66,7 @@ impl MessageQueue {
         let mut written = 0;
         let start = self.recent_acked as usize;
         let end = self.sequence_local as usize;
-        //println!("{}/{} - {}", start, end, self.send_queue.len());
+
         for index in start..end {
             let normlz = index % BUFFER_SIZE;
             if let Some(message) = &mut self.send_queue[normlz] {
@@ -82,9 +85,11 @@ impl MessageQueue {
         if let Some(ids) = self.awaiting_ack.get(&pid) {
             for id in ids.iter() {
                 let index = *id as usize % BUFFER_SIZE;
-                self.send_queue[index] = None;
-                if self.recent_acked < *id {
-                    self.recent_acked = *id;
+                if let Some(msg) = &mut self.send_queue[index] {
+                    if self.recent_acked < msg.id {
+                        self.recent_acked = msg.id;
+                    }
+                    self.send_queue[index] = None;
                 }
             }
             self.awaiting_ack.remove(&pid);
@@ -98,7 +103,7 @@ impl MessageQueue {
         r
     }
 
-    // Should return Result<usize, ParseErr> where usize is no. message so or something
+    // Should return Result<usize, ParseErr> where usize is no. messages or something
     pub fn recv_messages(&mut self, slice: &[u8]) {
         let len = slice.len();
         let mut index = 0;
@@ -113,12 +118,16 @@ impl MessageQueue {
             let new_index = index + size as usize;
             let data = slice[index..new_index].to_vec();
 
-            self.recv_queue.push(Message { id, size, data });
-
+            if id == self.sequence_remote {
+                self.recv.push(data);
+                self.sequence_remote = self.sequence_remote.wrapping_add(1);
+            } else {
+                self.recv_queue.push(Message { id, size, data });
+            }
             index = new_index;
         }
 
-        // move ordered messages from queue to recv
+        // move queued ordered messages from queue to recv if prev have been received
         let mut expected = true;
         while expected {
             expected = if let Some(msg) = self.recv_queue.peek() {

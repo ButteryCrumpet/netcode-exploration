@@ -20,8 +20,13 @@ fn main() {
     });
 
     let j2 = thread::spawn(move || {
+        let run_time = 20;
+        let pps = 60;
+
         let mut client = Client::new(client_addr);
-        client.connect(server_addr);
+        client
+            .connect(server_addr)
+            .expect("Couldn't connect to server");
         client.queue_message(b"connect".to_vec());
         client.send_next().unwrap();
         let start = time::Instant::now();
@@ -29,26 +34,29 @@ fn main() {
         let mut count: u128 = 0;
         loop {
             let ltime = time::Instant::now();
-            client.recv();
-            if let Some(data) = client.recv_messages() {
-                for msg in data.iter() {
-                    //println!("{}", std::str::from_utf8(&msg).unwrap());
-                }
+            if time::Instant::now() - start > time::Duration::from_secs(run_time) {
+                break;
             }
 
-            if ltime - last_sent > time::Duration::from_millis(500) {
-                client.queue_message(Vec::from(format!("{}", count)));
+            if ltime - last_sent > time::Duration::from_millis(1000 / pps) {
+                client.queue_message(Vec::from(format!("pong:{}", count)));
                 count += 1;
                 last_sent = ltime;
                 if let Ok(_amt) = client.send_next() {}
             }
 
-            if time::Instant::now() - start > time::Duration::from_secs(20) {
-                break;
+            if let Err(err) = client.recv() {
+                continue;
+            };
+
+            if let Some(data) = client.recv_messages() {
+                for msg in data.iter() {
+                    println!("{}", std::str::from_utf8(&msg).unwrap());
+                }
             }
         }
     });
 
-    j1.join().unwrap();
     j2.join().unwrap();
+    j1.join().unwrap();
 }

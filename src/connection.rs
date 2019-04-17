@@ -14,8 +14,8 @@ struct PacketData {
 
 #[derive(Copy, Clone, Debug)]
 enum PacketState {
-    Acked(PacketData),
-    UnAcked(PacketData),
+    Acknowledged(PacketData),
+    UnAcknowledged(PacketData),
 }
 
 pub struct Connection {
@@ -55,16 +55,24 @@ impl Connection {
         }
     }
 
-    pub fn queue_message(&mut self, message: Vec<u8>) {
+    pub fn queue_message(&mut self, message: &[u8]) {
         self.message_queue.queue_message(message);
     }
 
     pub fn send(&mut self, socket: &mut UdpSocket) -> Result<usize, std::io::Error> {
-        use PacketState::UnAcked;
+        use PacketState::UnAcknowledged;
 
         // Set sent packer buffer to ack them when needed
         let index = self.sequence as usize % BUFFER_SIZE;
-        self.sent_ack_buffer[index] = Some(UnAcked(PacketData {
+
+        // if unacked packet exists at location sequence has wrapped
+        // round and packet has been lost. ttl is send_rate / BUFFER_SIZE
+        // so buffer of 128 with a 60pps means a ~470ms ttl
+        if let Some(UnAcknowledged(_lost_packet)) = self.sent_ack_buffer[index] {
+            self.lost_packets = self.lost_packets.wrapping_add(1);
+        }
+
+        self.sent_ack_buffer[index] = Some(UnAcknowledged(PacketData {
             seq: self.sequence,
             sent_time: Instant::now(),
         }));
@@ -85,17 +93,17 @@ impl Connection {
         let data = self.message_queue.send_next(self.sequence, 1200);
         let packet = Packet::new(self.sequence, self.last_received_sequence, acks, data);
 
-        let send = socket.send_to(&packet.into_vec(), &self.remote_addr);
+        let sent = socket.send_to(&packet.into_vec(), &self.remote_addr)?;
 
         self.sequence = self.sequence.wrapping_add(1);
         self.sent_packets = self.sent_packets.wrapping_add(1);
         self.last_sent_at = Instant::now();
 
-        send
+        Ok(sent)
     }
 
     pub fn receive_packet(&mut self, data: &[u8]) {
-        use PacketState::{Acked, UnAcked};
+        use PacketState::{Acknowledged, UnAcknowledged};
 
         let packet = Packet::from_slice(data).unwrap();
         self.recv_packets = self.recv_packets.wrapping_add(1);
@@ -121,16 +129,10 @@ impl Connection {
             let sn = *seq as usize;
             let index = sn % BUFFER_SIZE;
 
-            // If we we have sent a packet and it is current unacked
+            // If we we have sent a packet and it is currently unacked
             // we need to set it to acked.
-            if let Some(UnAcked(pdata)) = self.sent_ack_buffer[index] {
-                // If the sequence number isn't the same as inside
-                // the unacked buffer we must have lost that packet
-                if pdata.seq != sn as u16 {
-                    self.lost_packets.wrapping_add(1);
-                }
-
-                self.sent_ack_buffer[index] = Some(Acked(pdata));
+            if let Some(UnAcknowledged(pdata)) = self.sent_ack_buffer[index] {
+                self.sent_ack_buffer[index] = Some(Acknowledged(pdata));
                 self.acked_packets = self.acked_packets.wrapping_add(1);
 
                 // Ack the message queue
@@ -149,13 +151,13 @@ impl Connection {
 impl Drop for Connection {
     fn drop(&mut self) {
         println!(
-            "sent {}\nrecv {}\nacked {}\nlost {}\nrecent_recv {}\nrtt {}ms\n",
+            "sent {}\nrecv {}\nacked {}\nlost {}\nrecent_recv {}\npacket rtt {}ms\n",
             self.sent_packets,
             self.recv_packets,
             self.acked_packets,
             self.lost_packets,
             self.last_received_sequence,
-            self.rtt
+            self.rtt,
         );
     }
 }
